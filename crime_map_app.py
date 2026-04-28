@@ -15,6 +15,7 @@ for key, default in {
     "lat":       None,
     "lng":       None,
     "searched_postcode": "",
+    "hidden_cats": set(),
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -218,10 +219,14 @@ def fetch_crimes(lat, lng, radius_miles):
     )
     return resp.json() if resp.status_code == 200 else None
 
-def build_map(lat, lng, crimes, tiles):
+def build_map(lat, lng, crimes, tiles, hidden_cats=None):
+    if hidden_cats is None:
+        hidden_cats = set()
     m = folium.Map(location=[lat, lng], zoom_start=14, tiles=tiles)
     layers = {}
     for crime in crimes:
+        if crime['category'] in hidden_cats:
+            continue
         c_lat = float(crime['location']['latitude'])
         c_lng = float(crime['location']['longitude'])
         color, label = get_crime_style(crime['category'])
@@ -248,7 +253,7 @@ def build_map(lat, lng, crimes, tiles):
         if lbl not in added:
             lg.add_to(m)
 
-    folium.LayerControl(collapsed=False).add_to(m)
+    # LayerControl removed — sidebar handles filtering
     folium.Marker(
         [lat, lng],
         icon=folium.Icon(color='blue', icon='home', prefix='fa'),
@@ -265,15 +270,48 @@ with st.sidebar:
     st.button(f"{toggle_icon} {toggle_label}", on_click=toggle_theme)
 
     st.markdown("---")
-    st.markdown("### Severity Key")
+    st.markdown("### Filters")
+
+    # Show All / Hide All — write directly into checkbox keys so they re-render correctly
+    def show_all():
+        st.session_state.hidden_cats = set()
+        for cat in SEVERITY_ORDER:
+            st.session_state[f"chk_{cat}"] = True
+
+    def hide_all():
+        st.session_state.hidden_cats = set(SEVERITY_ORDER)
+        for cat in SEVERITY_ORDER:
+            st.session_state[f"chk_{cat}"] = False
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.button("Show All", key="show_all", on_click=show_all)
+    with col_b:
+        st.button("Hide All", key="hide_all", on_click=hide_all)
+
     for cat in SEVERITY_ORDER:
         color, label = get_crime_style(cat)
+        # Initialise checkbox key from hidden_cats on first run
+        if f"chk_{cat}" not in st.session_state:
+            st.session_state[f"chk_{cat}"] = cat not in st.session_state.hidden_cats
+        new_checked = st.checkbox(
+            label, key=f"chk_{cat}",
+            label_visibility="collapsed",
+        )
+        # Render coloured dot + label overlaid on the checkbox
         st.markdown(
-            f"<div class='crime-row'>"
-            f"<span><span class='crime-dot' style='background:{color};'></span>{label}</span>"
-            f"</div>",
+            f"<div style='margin-top:-2.6rem;margin-left:1.8rem;"
+            f"font-size:0.88rem;color:{text};pointer-events:none;'>"
+            f"<span style='display:inline-block;width:10px;height:10px;"
+            f"border-radius:50%;background:{color};margin-right:8px;'></span>"
+            f"{label}</div>",
             unsafe_allow_html=True,
         )
+        if new_checked:
+            st.session_state.hidden_cats.discard(cat)
+        else:
+            st.session_state.hidden_cats.add(cat)
+
     st.markdown(
         f"<p style='color:{footer_col};font-size:0.75rem;margin-top:12px;'>"
         f"Data: data.police.uk · Most recent month available</p>",
@@ -281,7 +319,7 @@ with st.sidebar:
     )
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.markdown("## UK Crime Map")
+st.markdown("## 🔍 UK Crime Map")
 st.markdown(
     f"<p style='color:{muted};margin-top:-12px;font-size:0.9rem;'>"
     f"Visualise street-level crime data from the UK Police API</p>",
@@ -339,7 +377,7 @@ if st.session_state.crimes:
     map_col, stat_col = st.columns([3, 1])
 
     with map_col:
-        folium_map = build_map(lat, lng, crimes, tiles=map_tiles)
+        folium_map = build_map(lat, lng, crimes, tiles=map_tiles, hidden_cats=st.session_state.hidden_cats)
         st_folium(folium_map, width=None, height=560, returned_objects=[])
 
     with stat_col:
